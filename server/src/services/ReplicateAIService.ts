@@ -1,5 +1,7 @@
 import Replicate from 'replicate';
 import sharp from 'sharp';
+import fs from 'fs/promises';
+import path from 'path';
 
 /**
  * Replicate AI Service
@@ -45,48 +47,99 @@ class ReplicateAIService {
       // Convert buffer to base64 data URL
       const base64Image = `data:image/png;base64,${imageBuffer.toString('base64')}`;
 
-      // Use ControlNet Scribble model for sketch-to-anime
-      // This model is specifically designed for converting sketches
+      // Use ControlNet Scribble - focus on preserving the exact drawing
       const output = await this.client.run(
         "jagilley/controlnet-scribble:435061a1b5a4c1e26740464bf786efdfa9cb3a3ac488595a2de23e143fdb0117",
         {
           input: {
             image: base64Image,
-            prompt: "anime style, vibrant colors, clean lines, professional anime artwork, high quality",
-            negative_prompt: "blurry, low quality, distorted, ugly, bad anatomy",
-            num_outputs: 1,
-            guidance_scale: 7.5,
+            // Universal prompt: Only describe style, not content
+            // This works for any drawing (person, animal, object, etc.)
+            prompt: "anime art style, vibrant colors, clean outlines",
+            negative_prompt: "photograph, realistic, 3d, blurry, low quality, extra elements, background details",
             num_inference_steps: 20,
+            guidance_scale: 7.5,
+            // High conditioning scale = stay very close to the input sketch
+            controlnet_conditioning_scale: 1.5,
           }
         }
       );
 
-      console.log('📦 Replicate output:', output);
+      console.log('📦 Replicate output type:', typeof output);
+      console.log('📦 Is array:', Array.isArray(output));
+      console.log('📦 Number of outputs:', Array.isArray(output) ? output.length : 0);
 
-      // Output is typically an array of URLs
-      const imageUrl = Array.isArray(output) ? output[0] : output;
+      // The output can be either URLs or ReadableStreams depending on SDK version
+      if (!Array.isArray(output) || output.length === 0) {
+        console.error('❌ No output from Replicate:', output);
+        throw new Error('No output received from Replicate');
+      }
 
-      if (typeof imageUrl !== 'string') {
+      // ControlNet returns multiple outputs, use the second one (more faithful to original)
+      let imageData: Buffer;
+      const outputIndex = output.length > 1 ? 1 : 0;  // Use second output if available
+      const selectedOutput = output[outputIndex];
+
+      console.log(`📦 Using output[${outputIndex}] of ${output.length} outputs`);
+
+      // Check if it's a ReadableStream (newer SDK behavior)
+      if (selectedOutput && typeof selectedOutput === 'object' && 'getReader' in selectedOutput) {
+        console.log('📥 Reading from ReadableStream...');
+        const stream = selectedOutput as ReadableStream<Uint8Array>;
+        const reader = stream.getReader();
+        const chunks: Uint8Array[] = [];
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (value) chunks.push(value);
+        }
+
+        // Combine all chunks into a single buffer
+        const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
+        const combined = new Uint8Array(totalLength);
+        let offset = 0;
+        for (const chunk of chunks) {
+          combined.set(chunk, offset);
+          offset += chunk.length;
+        }
+
+        imageData = Buffer.from(combined);
+        console.log('✅ Stream read complete, size:', imageData.length, 'bytes');
+
+      } else if (typeof selectedOutput === 'string') {
+        // It's a URL string
+        console.log('📥 Downloading image from URL:', selectedOutput);
+        const response = await fetch(selectedOutput);
+
+        if (!response.ok) {
+          throw new Error(`Failed to download image: ${response.statusText}`);
+        }
+
+        const arrayBuffer = await response.arrayBuffer();
+        imageData = Buffer.from(arrayBuffer);
+        console.log('✅ Downloaded image, size:', imageData.length, 'bytes');
+
+      } else {
+        console.error('❌ Unexpected output format:', selectedOutput);
         throw new Error('Unexpected output format from Replicate');
       }
 
-      // Fetch the image from the URL
-      console.log('📥 Downloading image from:', imageUrl);
-      const response = await fetch(imageUrl);
-
-      if (!response.ok) {
-        throw new Error(`Failed to download image: ${response.statusText}`);
-      }
-
-      const arrayBuffer = await response.arrayBuffer();
-      const downloadedBuffer = Buffer.from(arrayBuffer);
-
       // Resize to consistent size
-      const processedBuffer = await sharp(downloadedBuffer)
+      const processedBuffer = await sharp(imageData)
         .resize(512, 512, { fit: 'contain', background: '#ffffff' })
         .png()
         .toBuffer();
 
+      // Save to disk for debugging
+      const outputDir = path.join(process.cwd(), 'output');
+      await fs.mkdir(outputDir, { recursive: true });
+
+      const timestamp = Date.now();
+      const outputPath = path.join(outputDir, `replicate-${timestamp}.png`);
+      await fs.writeFile(outputPath, processedBuffer);
+
+      console.log('💾 Saved output to:', outputPath);
       console.log('✅ Replicate AI: Anime conversion complete');
       return processedBuffer;
 

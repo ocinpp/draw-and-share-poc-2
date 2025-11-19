@@ -1,12 +1,17 @@
+import dotenv from 'dotenv';
+
+// Load environment variables FIRST before importing any services
+dotenv.config();
+
+// Debug: Check if env vars are loaded
+console.log('🔍 Debug - AI_PROVIDER:', process.env.AI_PROVIDER);
+console.log('🔍 Debug - REPLICATE_API_TOKEN:', process.env.REPLICATE_API_TOKEN ? 'SET' : 'NOT SET');
+
 import express from 'express';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import cors from 'cors';
-import dotenv from 'dotenv';
 import AIConversionService from './services/AIConversionService.js';
-
-// Load environment variables
-dotenv.config();
 
 const app = express();
 const httpServer = createServer(app);

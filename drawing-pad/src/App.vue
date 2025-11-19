@@ -332,7 +332,7 @@ button {
   display: flex;
   align-items: center;
   justify-content: center;
-  animation: fadeIn 0.3s;
+  animation: fadeInCenter 0.3s ease-out;
 }
 
 .success-message {
@@ -468,6 +468,26 @@ button {
   }
 }
 
+@keyframes fadeInCenter {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes scaleIn {
+  from {
+    transform: scale(0.9);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
 /* Preview Dialog */
 .preview-overlay {
   position: fixed;
@@ -480,7 +500,7 @@ button {
   display: flex;
   align-items: center;
   justify-content: center;
-  animation: fadeIn 0.3s;
+  animation: fadeInCenter 0.2s ease-out;
 }
 
 .preview-dialog {
@@ -492,6 +512,7 @@ button {
   display: flex;
   flex-direction: column;
   gap: 20px;
+  animation: scaleIn 0.3s ease-out;
 }
 
 .preview-header {

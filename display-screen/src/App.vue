@@ -95,7 +95,7 @@ function findNonOverlappingPosition(
   padding: number
 ): { x: number; y: number } {
   const maxAttempts = 50;
-  const headerHeight = 100; // Space for header
+  const headerHeight = 200; // Space for header (increased to prevent overlap with rotated drawings)
   const margin = 50; // Margin from edges
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
@@ -234,17 +234,18 @@ function removeDrawing(id: string) {
 }
 
 .header {
-  position: absolute;
+  position: fixed;
   top: 20px;
   left: 50%;
   transform: translateX(-50%);
   text-align: center;
   color: white;
-  z-index: 1000;
-  background: rgba(0, 0, 0, 0.3);
+  z-index: 9999;
+  background: rgba(0, 0, 0, 0.5);
   padding: 15px 30px;
   border-radius: 12px;
   backdrop-filter: blur(10px);
+  pointer-events: none;
 }
 
 .header h1 {

@@ -1,28 +1,37 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from "vue";
+import { ref, onMounted, onUnmounted, computed } from "vue";
 import { io, Socket } from "socket.io-client";
+import DrawCanvas from "./components/DrawCanvas.vue";
+import ShapeCanvas from "./components/ShapeCanvas.vue";
 
 const SERVER_URL = "http://localhost:3000";
 const ROOM = "default-room";
 
+// Editor mode
+type EditorMode = "draw" | "shape";
+const currentMode = ref<EditorMode>("draw");
+
+// Component refs
+const drawCanvasRef = ref<InstanceType<typeof DrawCanvas> | null>(null);
+const shapeCanvasRef = ref<InstanceType<typeof ShapeCanvas> | null>(null);
+
 // State
-const canvas = ref<HTMLCanvasElement | null>(null);
 const socket = ref<Socket | null>(null);
-const isDrawing = ref(false);
 const isSending = ref(false);
-const lastX = ref(0);
-const lastY = ref(0);
 const swipeStartY = ref(0);
 const showSuccess = ref(false);
 const showPreview = ref(false);
 const previewImage = ref("");
 
-// Canvas context
-let ctx: CanvasRenderingContext2D | null = null;
+// Computed
+const instructionText = computed(() => {
+  return currentMode.value === "draw"
+    ? 'Draw your artwork, then tap "Done"'
+    : 'Drag shapes to create, then tap "Done"';
+});
 
 // Initialize socket connection
 onMounted(() => {
-  // Connect to server
   socket.value = io(SERVER_URL);
 
   socket.value.on("connect", () => {
@@ -45,101 +54,51 @@ onMounted(() => {
       }, 2500);
     }
   });
-
-  // Setup canvas
-  if (canvas.value) {
-    ctx = canvas.value.getContext("2d");
-    resizeCanvas();
-    setupCanvas();
-  }
-
-  window.addEventListener("resize", resizeCanvas);
 });
 
 onUnmounted(() => {
   socket.value?.disconnect();
-  window.removeEventListener("resize", resizeCanvas);
 });
 
-function resizeCanvas() {
-  if (!canvas.value) return;
-  canvas.value.width = window.innerWidth;
-  canvas.value.height = window.innerHeight;
-  setupCanvas();
-}
-
-function setupCanvas() {
-  if (!ctx) return;
-  ctx.strokeStyle = "#000000";
-  ctx.lineWidth = 3;
-  ctx.lineCap = "round";
-  ctx.lineJoin = "round";
-}
-
-// Drawing functions
-function startDrawing(e: MouseEvent | TouchEvent) {
-  isDrawing.value = true;
-  const pos = getPosition(e);
-  lastX.value = pos.x;
-  lastY.value = pos.y;
-  swipeStartY.value = pos.y;
-}
-
-function draw(e: MouseEvent | TouchEvent) {
-  if (!isDrawing.value || !ctx) return;
-
-  const pos = getPosition(e);
-
-  ctx.beginPath();
-  ctx.moveTo(lastX.value, lastY.value);
-  ctx.lineTo(pos.x, pos.y);
-  ctx.stroke();
-
-  lastX.value = pos.x;
-  lastY.value = pos.y;
-}
-
-function stopDrawing(e: MouseEvent | TouchEvent) {
-  if (!isDrawing.value) return;
-  isDrawing.value = false;
-}
-
-function getPosition(e: MouseEvent | TouchEvent): { x: number; y: number } {
-  if (e instanceof TouchEvent) {
-    const touch = e.touches[0] || e.changedTouches[0];
-    return {
-      x: touch.clientX,
-      y: touch.clientY,
-    };
+// Mode switching
+function setMode(mode: EditorMode) {
+  if (currentMode.value !== mode) {
+    currentMode.value = mode;
   }
-  return {
-    x: e.clientX,
-    y: e.clientY,
-  };
 }
 
-function showPreviewDialog() {
-  if (!canvas.value) return;
+// Get current canvas component
+function getCurrentCanvas() {
+  return currentMode.value === "draw"
+    ? drawCanvasRef.value
+    : shapeCanvasRef.value;
+}
 
-  // Check if canvas is empty
-  if (isCanvasEmpty()) {
+// Check if current canvas is empty
+function isCurrentCanvasEmpty(): boolean {
+  const canvas = getCurrentCanvas();
+  if (!canvas) return true;
+
+  if (currentMode.value === "draw") {
+    return (canvas as InstanceType<typeof DrawCanvas>).isCanvasEmpty();
+  } else {
+    return (canvas as InstanceType<typeof ShapeCanvas>).isEmpty();
+  }
+}
+
+async function showPreviewDialog() {
+  if (isCurrentCanvasEmpty()) {
     return;
   }
 
-  previewImage.value = canvas.value.toDataURL("image/png");
+  const canvas = getCurrentCanvas();
+  if (!canvas) return;
+
+  const imageData = await canvas.getImageData();
+  if (!imageData) return;
+
+  previewImage.value = imageData;
   showPreview.value = true;
-}
-
-function isCanvasEmpty(): boolean {
-  if (!canvas.value || !ctx) return true;
-
-  const pixelData = ctx.getImageData(
-    0,
-    0,
-    canvas.value.width,
-    canvas.value.height
-  );
-  return !pixelData.data.some((channel) => channel !== 0);
 }
 
 function handlePreviewSwipe(e: TouchEvent) {
@@ -150,7 +109,6 @@ function handlePreviewSwipe(e: TouchEvent) {
   } else if (e.type === "touchend") {
     const swipeDistance = swipeStartY.value - touch.clientY;
 
-    // Swipe up to send (>100px upward)
     if (swipeDistance > 100) {
       sendDrawing();
     }
@@ -175,8 +133,10 @@ function cancelPreview() {
 }
 
 function clearCanvas() {
-  if (!ctx || !canvas.value) return;
-  ctx.clearRect(0, 0, canvas.value.width, canvas.value.height);
+  const canvas = getCurrentCanvas();
+  if (canvas) {
+    canvas.clear();
+  }
   showPreview.value = false;
   previewImage.value = "";
 }
@@ -184,17 +144,29 @@ function clearCanvas() {
 
 <template>
   <div class="drawing-pad">
-    <canvas
-      ref="canvas"
-      @mousedown="startDrawing"
-      @mousemove="draw"
-      @mouseup="stopDrawing"
-      @mouseleave="stopDrawing"
-      @touchstart.prevent="startDrawing"
-      @touchmove.prevent="draw"
-      @touchend.prevent="stopDrawing"
-    />
+    <!-- Mode Toggle -->
+    <div class="mode-toggle">
+      <button
+        :class="['mode-btn', { active: currentMode === 'draw' }]"
+        @click="setMode('draw')"
+      >
+        ✏️ Draw
+      </button>
+      <button
+        :class="['mode-btn', { active: currentMode === 'shape' }]"
+        @click="setMode('shape')"
+      >
+        🔷 Shapes
+      </button>
+    </div>
 
+    <!-- Canvas Area -->
+    <div class="canvas-container">
+      <DrawCanvas v-show="currentMode === 'draw'" ref="drawCanvasRef" />
+      <ShapeCanvas v-show="currentMode === 'shape'" ref="shapeCanvasRef" />
+    </div>
+
+    <!-- Controls -->
     <div class="controls">
       <button @click="clearCanvas" class="btn-clear">Clear</button>
       <button @click="showPreviewDialog" class="btn-done">Done</button>
@@ -216,7 +188,8 @@ function clearCanvas() {
       </div>
     </div>
 
-    <div class="instructions">Draw your artwork, then tap "Done"</div>
+    <!-- Instructions -->
+    <div class="instructions">{{ instructionText }}</div>
 
     <!-- Preview Dialog -->
     <div v-if="showPreview" class="preview-overlay">
@@ -271,12 +244,47 @@ function clearCanvas() {
   touch-action: none;
 }
 
-canvas {
-  display: block;
-  cursor: crosshair;
-  background: white;
-  width: 100vw;
-  height: 100vh;
+/* Mode Toggle */
+.mode-toggle {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  display: flex;
+  gap: 4px;
+  background: rgba(255, 255, 255, 0.95);
+  padding: 4px;
+  border-radius: 12px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.15);
+  z-index: 100;
+}
+
+.mode-btn {
+  padding: 10px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  background: transparent;
+  color: #666;
+}
+
+.mode-btn:hover {
+  background: #f0f0f0;
+  color: #333;
+}
+
+.mode-btn.active {
+  background: #4a90d9;
+  color: white;
+  box-shadow: 0 2px 8px rgba(74, 144, 217, 0.3);
+}
+
+/* Canvas Container */
+.canvas-container {
+  width: 100%;
+  height: 100%;
   position: absolute;
   top: 0;
   left: 0;
